@@ -2,43 +2,113 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>TikZ External Renderer</title>
+  <title>External Full Renderer</title>
   <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">
   <style>
-    body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: transparent; }
-    svg { max-width: 100%; height: auto; }
-    #error-msg { color: #ff6b6b; font-family: sans-serif; font-weight: bold; display: none; padding: 20px; text-align: center; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; margin: 0; color: #333; background: #fff; }
+    .q-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #555; border-bottom: 2px solid #eee; padding-bottom: 5px; }
+    .q-body { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+    .q-choices { list-style-type: none; padding: 0; }
+    .q-choices li { padding: 10px; margin-bottom: 8px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef; }
+    .tikz-container { margin-top: 20px; text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px dashed #ccc; }
+    .q-tikz { background: #e9ecef; padding: 10px; font-family: monospace; font-size: 12px; white-space: pre-wrap; margin-top: 10px; text-align: left; }
+    #error-msg { color: #fff; background: #ff6b6b; font-weight: bold; display: none; padding: 10px; border-radius: 4px; margin-bottom: 15px; }
+    .btn { background: #6c757d; color: white; border: none; padding: 6px 12px; font-size: 12px; cursor: pointer; border-radius: 4px; }
   </style>
-</head>
-<body>
-  <div id="error-msg"></div>
-  <div id="tikz-container"></div>
 
   <script>
-    // URL의 Hash(#) 부분에서 TikZ 코드를 안전하게 추출 (길이 제한 우회)
-    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-    const rawCode = hashParams.get('code');
+    window.MathJax = {
+      tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+      startup: { typeset: false }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+  
+  <div id="error-msg"></div>
+  <div id="content">
+     <h2 style="color:#ccc; text-align:center; margin-top:30vh;">
+       👈 '미리보기 렌더링' 버튼을 누르면<br>여기에 문제가 렌더링됩니다.
+     </h2>
+  </div>
 
-    if (rawCode) {
+  <script>
+    // GAS로부터 JSON 데이터를 받는 리스너
+    window.addEventListener('message', function(event) {
+      const payloadString = event.data;
+      if (!payloadString) return;
+
       try {
-        const decodedCode = decodeURIComponent(rawCode);
-        
-        // 1. TikZ 코드를 담은 script 태그 생성
-        const scriptTag = document.createElement('script');
-        scriptTag.type = 'text/tikz';
-        scriptTag.textContent = decodedCode;
-        document.getElementById('tikz-container').appendChild(scriptTag);
-        
-        // 2. 코드가 DOM에 삽입된 후 TikZJax 라이브러리 로드 (자동 렌더링 트리거)
-        const tikzJaxScript = document.createElement('script');
-        tikzJaxScript.src = "https://tikzjax.com/v1/tikzjax.js";
-        document.body.appendChild(tikzJaxScript);
-        
+        const parsed = JSON.parse(payloadString);
+        document.getElementById('error-msg').style.display = 'none';
+        renderAll(parsed);
       } catch (e) {
-        showError('코드 디코딩 중 에러가 발생했습니다: ' + e.message);
+        showError('JSON 파싱 에러: ' + e.message);
       }
-    } else {
-      showError('전달된 TikZ 코드가 없습니다.');
+    });
+
+    function renderAll(parsed) {
+      const content = document.getElementById('content');
+      let html = `<div class="q-title">문항 미리보기</div>`;
+
+      // 1. 본문 생성
+      let bodyText = parsed.body || "";
+      bodyText = bodyText.replace(/\n/g, "<br>");
+      html += `<div class="q-body">${bodyText}</div>`;
+
+      // 2. 보기 생성
+      if (parsed.choices && parsed.choices.length > 0) {
+        html += `<ul class="q-choices">`;
+        parsed.choices.forEach(c => {
+           html += `<li>${c}</li>`;
+        });
+        html += `</ul>`;
+      }
+
+      // 3. 원본 이미지 링크
+      if (parsed.graphics && parsed.graphics.isExist && parsed.graphics.originalUrl) {
+         html += `<div style="margin-bottom: 15px;"><a href="${parsed.graphics.originalUrl}" target="_blank" style="color:#007bff; text-decoration: none; font-weight: bold;">📷 원본 이미지 보기 (새창)</a></div>`;
+      }
+
+      // HTML 덮어쓰기
+      content.innerHTML = html;
+
+      // 4. TikZ 그래프 생성 및 라이브러리 로드
+      if (parsed.graphics && parsed.graphics.isExist && parsed.graphics.tikzCode) {
+         const cleanTikzCode = parsed.graphics.tikzCode.replace(/\\\\/g, '\\').replace(/\u00A0/g, ' ');
+         const safeTikzCode = parsed.graphics.tikzCode.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+         
+         const tikzWrapper = document.createElement('div');
+         tikzWrapper.className = 'tikz-container';
+         tikzWrapper.innerHTML = `<div style="font-weight:bold; color: #007bff; margin-bottom: 10px;">[AI 생성 그래프 (TikZ)]</div>`;
+         
+         // TikZJax가 인식할 수 있도록 script 태그 주입
+         const scriptTag = document.createElement('script');
+         scriptTag.type = 'text/tikz';
+         scriptTag.textContent = cleanTikzCode;
+         tikzWrapper.appendChild(scriptTag);
+
+         // 원본 코드 토글 UI
+         const toggleArea = document.createElement('div');
+         toggleArea.innerHTML = `
+            <br>
+            <button class="btn" onclick="document.getElementById('rawTikz').style.display = document.getElementById('rawTikz').style.display === 'none' ? 'block' : 'none'">💻 원본 TikZ 코드 보기/숨기기</button>
+            <div id="rawTikz" class="q-tikz" style="display: none;">${safeTikzCode}</div>
+         `;
+         tikzWrapper.appendChild(toggleArea);
+         content.appendChild(tikzWrapper);
+
+         // TikZJax 스크립트 강제 로드 (렌더링 트리거)
+         const tikzJaxScript = document.createElement('script');
+         tikzJaxScript.src = "https://tikzjax.com/v1/tikzjax.js";
+         document.body.appendChild(tikzJaxScript);
+      }
+
+      // 5. MathJax 렌더링 트리거
+      if (window.MathJax && MathJax.typesetPromise) {
+         MathJax.typesetPromise([content]).catch(err => console.error(err));
+      }
     }
 
     function showError(msg) {
