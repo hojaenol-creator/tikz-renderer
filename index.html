@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>TikZ External Renderer</title>
+  <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">
+  <style>
+    body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: transparent; }
+    svg { max-width: 100%; height: auto; }
+    #error-msg { color: #ff6b6b; font-family: sans-serif; font-weight: bold; display: none; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="error-msg"></div>
+  <div id="tikz-container"></div>
+
+  <script>
+    // URL의 Hash(#) 부분에서 TikZ 코드를 안전하게 추출 (길이 제한 우회)
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const rawCode = hashParams.get('code');
+
+    if (rawCode) {
+      try {
+        const decodedCode = decodeURIComponent(rawCode);
+        
+        // 1. TikZ 코드를 담은 script 태그 생성
+        const scriptTag = document.createElement('script');
+        scriptTag.type = 'text/tikz';
+        scriptTag.textContent = decodedCode;
+        document.getElementById('tikz-container').appendChild(scriptTag);
+        
+        // 2. 코드가 DOM에 삽입된 후 TikZJax 라이브러리 로드 (자동 렌더링 트리거)
+        const tikzJaxScript = document.createElement('script');
+        tikzJaxScript.src = "https://tikzjax.com/v1/tikzjax.js";
+        document.body.appendChild(tikzJaxScript);
+        
+      } catch (e) {
+        showError('코드 디코딩 중 에러가 발생했습니다: ' + e.message);
+      }
+    } else {
+      showError('전달된 TikZ 코드가 없습니다.');
+    }
+
+    function showError(msg) {
+      const errDiv = document.getElementById('error-msg');
+      errDiv.textContent = msg;
+      errDiv.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
