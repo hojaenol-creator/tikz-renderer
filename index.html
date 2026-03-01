@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>External Full Renderer</title>
   <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,700;1,400&display=swap">
   <style>
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; margin: 0; color: #333; background: #fff; }
     .q-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #555; border-bottom: 2px solid #eee; padding-bottom: 5px; }
@@ -17,6 +18,36 @@
     .btn { background: #6c757d; color: white; border: none; padding: 6px 12px; font-size: 12px; cursor: pointer; border-radius: 4px; }
     .btn:hover { background: #5a6268; }
     .image-placeholder { display: inline-block; margin: 10px 0; padding: 6px 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404; font-size: 13px; }
+
+    /* ── 캡처 버튼 ── */
+    #captureBar { display: none; position: sticky; top: 0; z-index: 100; background: #fff; padding: 10px 0 10px 0; border-bottom: 1px solid #eee; margin-bottom: 10px; }
+    #captureBar button { background: #e74c3c; color: #fff; border: none; padding: 10px 20px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 6px; margin-right: 8px; }
+    #captureBar button:hover { background: #c0392b; }
+    #captureBar button.secondary { background: #3498db; }
+    #captureBar button.secondary:hover { background: #2980b9; }
+    #captureBar .status { font-size: 12px; color: #999; margin-left: 8px; }
+
+    /* ── 캡처 전용 스타일 (출판 품질) ── */
+    #captureTarget {
+      display: none;
+      font-family: 'Noto Serif', 'Times New Roman', Georgia, serif;
+      font-size: 18px;
+      line-height: 1.8;
+      color: #111;
+      background: #fff;
+      padding: 40px 48px;
+      max-width: 780px;
+    }
+    #captureTarget .q-body { font-size: 18px; line-height: 1.8; margin-bottom: 24px; }
+    #captureTarget .q-choices { padding: 0; margin: 0; }
+    #captureTarget .q-choices li {
+      padding: 12px 16px; margin-bottom: 10px;
+      background: #fafafa; border-radius: 8px; border: 1px solid #ddd;
+      font-size: 18px; list-style: none;
+    }
+    #captureTarget .q-choices li .choice-index { font-weight: bold; color: #2c3e50; margin-right: 10px; }
+    #captureTarget .tikz-svg-inline { text-align: center; margin: 20px 0; }
+    #captureTarget .tikz-svg-inline svg { max-width: 100%; height: auto; }
   </style>
 
   <script>
@@ -26,8 +57,15 @@
     };
   </script>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
+
+  <div id="captureBar">
+    <button onclick="captureAsPng()">📸 PNG 캡처 (새 창)</button>
+    <button class="secondary" onclick="captureAndDownload()">💾 PNG 다운로드</button>
+    <span class="status" id="captureStatus"></span>
+  </div>
 
   <div id="error-msg"></div>
   <div id="content">
@@ -36,36 +74,41 @@
      </h2>
   </div>
 
-  <script>
-    /* ── 유틸리티 함수 ── */
+  <!-- 캡처 전용 (숨겨진 영역) -->
+  <div id="captureTarget"></div>
 
-    // 백슬래시 정리 및 특수 공백 제거
+  <script>
+    /* ══════════════════════════════════════════
+       유틸리티 함수
+    ══════════════════════════════════════════ */
+
     function cleanLatex(str) {
       if (str === null || str === undefined) return "";
       if (typeof str !== 'string') str = String(str);
       return str.replace(/\\\\/g, '\\').replace(/\u00A0/g, ' ');
     }
 
-    // graphics: 이전(단일 객체) / 신규(배열) 모두 호환
     function normalizeGraphics(graphics) {
       if (!graphics) return [];
       if (Array.isArray(graphics)) return graphics;
       return [graphics];
     }
 
-    // choices: 이전(문자열 배열) / 신규({index,text} 배열) 모두 호환
     function normalizeChoices(choices) {
       if (!choices || !Array.isArray(choices)) return [];
       var labels = ['A','B','C','D','E','F','G','H','I','J'];
       return choices.map(function(c, i) {
-        if (typeof c === 'string') {
-          return { index: labels[i] || String(i + 1), text: c };
-        }
+        if (typeof c === 'string') return { index: labels[i] || String(i + 1), text: c };
         return { index: c.index || labels[i] || String(i + 1), text: c.text || '' };
       });
     }
 
-    /* ── TikZ iframe 블록 생성 ── */
+    // 현재 렌더링된 JSON 데이터 보관 (캡처 시 재사용)
+    var currentParsedData = null;
+
+    /* ══════════════════════════════════════════
+       TikZ iframe 블록 생성 (미리보기용)
+    ══════════════════════════════════════════ */
     function createTikzBlock(graphicItem) {
       var cleanTikzCode = cleanLatex(graphicItem.tikzCode);
 
@@ -73,7 +116,6 @@
       tikzWrapper.className = 'tikz-container';
       tikzWrapper.innerHTML = '<div style="font-weight:bold; color: #007bff; margin-bottom: 10px;">[AI 생성 그래프 (TikZ)]</div>';
 
-      // 원본 이미지 링크
       if (graphicItem.originalUrl) {
         var linkDiv = document.createElement('div');
         linkDiv.style.marginBottom = '10px';
@@ -81,7 +123,6 @@
         tikzWrapper.appendChild(linkDiv);
       }
 
-      // iframe으로 독립된 TikZJax 환경 구성
       var iframe = document.createElement('iframe');
       iframe.style.width = '100%';
       iframe.style.height = '100%';
@@ -89,7 +130,6 @@
       iframe.style.background = 'transparent';
       iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
 
-      // 리사이즈 가능한 래퍼
       var resizeWrap = document.createElement('div');
       resizeWrap.style.cssText = 'resize: vertical; overflow: hidden; border: 1px solid #ccc; border-radius: 4px; padding: 0; min-height: 150px; max-height: 1200px; height: 450px; position: relative;';
       resizeWrap.appendChild(iframe);
@@ -101,28 +141,22 @@
       tikzWrapper.appendChild(resizeWrap);
       tikzWrapper.appendChild(resizeHint);
 
-      // 토글 버튼 및 원본 코드
       var toggleArea = document.createElement('div');
       toggleArea.style.marginTop = '10px';
-
       var toggleBtn = document.createElement('button');
       toggleBtn.className = 'btn';
       toggleBtn.textContent = '💻 원본 TikZ 코드 보기/숨기기';
-
       var rawCodeDiv = document.createElement('div');
       rawCodeDiv.className = 'q-tikz';
       rawCodeDiv.style.display = 'none';
       rawCodeDiv.textContent = cleanTikzCode;
-
       toggleBtn.addEventListener('click', function() {
         rawCodeDiv.style.display = (rawCodeDiv.style.display === 'none') ? 'block' : 'none';
       });
-
       toggleArea.appendChild(toggleBtn);
       toggleArea.appendChild(rawCodeDiv);
       tikzWrapper.appendChild(toggleArea);
 
-      // iframe 내부 HTML 주입 (DOM 삽입 후 실행)
       var iframeRef = iframe;
       var tikzCode = cleanTikzCode;
       requestAnimationFrame(function() {
@@ -165,7 +199,6 @@
       return tikzWrapper;
     }
 
-    /* ── 원본 이미지만 있는 graphic용 블록 ── */
     function createImageLinkBlock(graphicItem) {
       var div = document.createElement('div');
       div.className = 'tikz-container';
@@ -173,7 +206,6 @@
       return div;
     }
 
-    /* ── 플레이스홀더 경고 블록 ── */
     function createPlaceholder(index) {
       var div = document.createElement('div');
       div.className = 'image-placeholder';
@@ -181,21 +213,26 @@
       return div;
     }
 
-    /* ── GAS 메시지 수신 리스너 ── */
+    /* ══════════════════════════════════════════
+       GAS 메시지 수신 리스너
+    ══════════════════════════════════════════ */
     window.addEventListener('message', function(event) {
       var payloadString = event.data;
       if (!payloadString || typeof payloadString !== 'string') return;
-
       try {
         var parsed = JSON.parse(payloadString);
         document.getElementById('error-msg').style.display = 'none';
+        currentParsedData = parsed;
         renderAll(parsed);
+        document.getElementById('captureBar').style.display = 'block';
       } catch (e) {
         showError('JSON 파싱 에러: ' + e.message);
       }
     });
 
-    /* ── 메인 렌더링 함수 ── */
+    /* ══════════════════════════════════════════
+       메인 렌더링 (미리보기)
+    ══════════════════════════════════════════ */
     function renderAll(parsed) {
       var content = document.getElementById('content');
       content.innerHTML = '';
@@ -203,22 +240,17 @@
       var graphicsArr = normalizeGraphics(parsed.graphics);
       var choicesArr = normalizeChoices(parsed.choices);
 
-      // 1. 타이틀
       var titleDiv = document.createElement('div');
       titleDiv.className = 'q-title';
       titleDiv.textContent = '문항 미리보기';
       content.appendChild(titleDiv);
 
-      // 2. 본문 — [image_section]: N 플레이스홀더를 기준으로 분할
       var bodyText = cleanLatex(parsed.body || "");
       var bodyParts = bodyText.split(/\[image_section\]\s*:\s*(\d+)/);
-      // 결과: [텍스트0, 번호1, 텍스트2, 번호3, ...]
-
       var referencedIndices = {};
 
       for (var i = 0; i < bodyParts.length; i++) {
         if (i % 2 === 0) {
-          // 텍스트 파트
           var textPart = bodyParts[i].trim();
           if (textPart) {
             var textDiv = document.createElement('div');
@@ -227,10 +259,8 @@
             content.appendChild(textDiv);
           }
         } else {
-          // [image_section]: N → 0-based index로 변환
           var gIdx = parseInt(bodyParts[i], 10) - 1;
           referencedIndices[gIdx] = true;
-
           if (gIdx >= 0 && gIdx < graphicsArr.length) {
             var gItem = graphicsArr[gIdx];
             if (gItem && gItem.isExist && gItem.tikzCode) {
@@ -246,7 +276,6 @@
         }
       }
 
-      // 3. 본문에서 참조되지 않은 나머지 graphics를 하단에 표시
       graphicsArr.forEach(function(gItem, idx) {
         if (referencedIndices[idx]) return;
         if (gItem && gItem.isExist && gItem.tikzCode) {
@@ -256,7 +285,6 @@
         }
       });
 
-      // 4. 객관식 보기
       if (choicesArr.length > 0) {
         var ul = document.createElement('ul');
         ul.className = 'q-choices';
@@ -268,12 +296,186 @@
         content.appendChild(ul);
       }
 
-      // 5. MathJax 렌더링 트리거
       if (window.MathJax && MathJax.typesetPromise) {
         MathJax.typesetPromise([content]).catch(function(err) { console.error(err); });
       }
     }
 
+    /* ══════════════════════════════════════════
+       PNG 캡처 — 출판 품질 렌더링
+    ══════════════════════════════════════════ */
+
+    // iframe에서 TikZ SVG 추출
+    function extractSvgFromIframes() {
+      var svgMap = []; // index → svg outerHTML
+      var iframes = document.querySelectorAll('#content .tikz-container iframe');
+      iframes.forEach(function(iframe, idx) {
+        try {
+          var svg = iframe.contentWindow.document.querySelector('svg');
+          if (svg) {
+            svgMap.push(svg.outerHTML);
+          } else {
+            svgMap.push(null);
+          }
+        } catch (e) {
+          svgMap.push(null);
+        }
+      });
+      return svgMap;
+    }
+
+    // 캡처 전용 DOM 생성 (iframe 없이, SVG 인라인)
+    function buildCaptureDOM(parsed, svgMap) {
+      var target = document.getElementById('captureTarget');
+      target.innerHTML = '';
+
+      var graphicsArr = normalizeGraphics(parsed.graphics);
+      var choicesArr = normalizeChoices(parsed.choices);
+      var svgIndex = 0; // iframe 순서 추적
+
+      // 본문
+      var bodyText = cleanLatex(parsed.body || "");
+      var bodyParts = bodyText.split(/\[image_section\]\s*:\s*(\d+)/);
+      var referencedIndices = {};
+
+      for (var i = 0; i < bodyParts.length; i++) {
+        if (i % 2 === 0) {
+          var textPart = bodyParts[i].trim();
+          if (textPart) {
+            var textDiv = document.createElement('div');
+            textDiv.className = 'q-body';
+            textDiv.innerHTML = textPart.replace(/\n/g, '<br>');
+            target.appendChild(textDiv);
+          }
+        } else {
+          var gIdx = parseInt(bodyParts[i], 10) - 1;
+          referencedIndices[gIdx] = true;
+          if (gIdx >= 0 && gIdx < graphicsArr.length) {
+            var gItem = graphicsArr[gIdx];
+            if (gItem && gItem.isExist && gItem.tikzCode) {
+              var svgDiv = document.createElement('div');
+              svgDiv.className = 'tikz-svg-inline';
+              if (svgMap[svgIndex]) {
+                svgDiv.innerHTML = svgMap[svgIndex];
+              } else {
+                svgDiv.innerHTML = '<div style="color:#999; padding:20px;">[TikZ 그래프 - SVG 추출 불가]</div>';
+              }
+              svgIndex++;
+              target.appendChild(svgDiv);
+            }
+          }
+        }
+      }
+
+      // 참조되지 않은 graphics
+      graphicsArr.forEach(function(gItem, idx) {
+        if (referencedIndices[idx]) return;
+        if (gItem && gItem.isExist && gItem.tikzCode) {
+          var svgDiv = document.createElement('div');
+          svgDiv.className = 'tikz-svg-inline';
+          if (svgMap[svgIndex]) {
+            svgDiv.innerHTML = svgMap[svgIndex];
+          } else {
+            svgDiv.innerHTML = '<div style="color:#999; padding:20px;">[TikZ 그래프 - SVG 추출 불가]</div>';
+          }
+          svgIndex++;
+          target.appendChild(svgDiv);
+        }
+      });
+
+      // 보기
+      if (choicesArr.length > 0) {
+        var ul = document.createElement('ul');
+        ul.className = 'q-choices';
+        choicesArr.forEach(function(c) {
+          var li = document.createElement('li');
+          li.innerHTML = '<span class="choice-index">' + c.index + '.</span> ' + cleanLatex(c.text);
+          ul.appendChild(li);
+        });
+        target.appendChild(ul);
+      }
+
+      return target;
+    }
+
+    // html2canvas로 PNG 생성
+    function renderToPng(callback) {
+      if (!currentParsedData) { alert('렌더링된 문항이 없습니다.'); return; }
+
+      var status = document.getElementById('captureStatus');
+      status.textContent = '⏳ 캡처 준비 중...';
+
+      var svgMap = extractSvgFromIframes();
+      var target = buildCaptureDOM(currentParsedData, svgMap);
+
+      // 잠깐 보이게 하여 MathJax + html2canvas가 처리 가능하게
+      target.style.display = 'block';
+      target.style.position = 'absolute';
+      target.style.left = '-9999px';
+      target.style.top = '0';
+
+      // MathJax 렌더링 후 캡처
+      var mathjaxPromise = (window.MathJax && MathJax.typesetPromise)
+        ? MathJax.typesetPromise([target])
+        : Promise.resolve();
+
+      mathjaxPromise.then(function() {
+        status.textContent = '⏳ PNG 생성 중...';
+        return html2canvas(target, {
+          scale: 2,               // 2x 고해상도
+          backgroundColor: '#ffffff',
+          useCORS: true,
+          logging: false,
+          width: target.scrollWidth,
+          height: target.scrollHeight
+        });
+      }).then(function(canvas) {
+        target.style.display = 'none';
+        status.textContent = '✅ 완료!';
+        setTimeout(function() { status.textContent = ''; }, 2000);
+        callback(canvas);
+      }).catch(function(err) {
+        target.style.display = 'none';
+        status.textContent = '❌ 캡처 실패';
+        console.error('캡처 에러:', err);
+        alert('PNG 캡처 중 오류: ' + err.message);
+      });
+    }
+
+    // 📸 새 창에서 열기
+    function captureAsPng() {
+      renderToPng(function(canvas) {
+        var dataUrl = canvas.toDataURL('image/png');
+        var win = window.open('', '_blank');
+        if (win) {
+          win.document.write(
+            '<!DOCTYPE html><html><head><title>문항 캡처</title>' +
+            '<style>body{margin:0;padding:20px;background:#f0f0f0;text-align:center;font-family:sans-serif;}' +
+            'img{max-width:100%;box-shadow:0 4px 20px rgba(0,0,0,0.15);border-radius:4px;background:#fff;}' +
+            '.info{margin:10px 0 20px;color:#666;font-size:13px;}</style></head><body>' +
+            '<div class="info">이미지를 우클릭하여 저장하거나, 아래 버튼을 사용하세요.<br>' +
+            '<button onclick="var a=document.createElement(\'a\');a.href=document.querySelector(\'img\').src;a.download=\'question.png\';a.click();" ' +
+            'style="margin-top:10px;padding:8px 16px;background:#3498db;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;">💾 PNG 다운로드</button></div>' +
+            '<img src="' + dataUrl + '">' +
+            '</body></html>'
+          );
+          win.document.close();
+        }
+      });
+    }
+
+    // 💾 바로 다운로드
+    function captureAndDownload() {
+      renderToPng(function(canvas) {
+        var dataUrl = canvas.toDataURL('image/png');
+        var a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = 'question_' + Date.now() + '.png';
+        a.click();
+      });
+    }
+
+    /* ══════════════════════════════════════════ */
     function showError(msg) {
       var errDiv = document.getElementById('error-msg');
       errDiv.textContent = msg;
