@@ -18,6 +18,8 @@
     .btn { background: #6c757d; color: white; border: none; padding: 6px 12px; font-size: 12px; cursor: pointer; border-radius: 4px; }
     .btn:hover { background: #5a6268; }
     .image-placeholder { display: inline-block; margin: 10px 0; padding: 6px 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404; font-size: 13px; }
+    .latex-table { border-collapse: collapse; margin: 12px auto; font-size: inherit; font-family: inherit; }
+    .latex-table td { padding: 4px 14px; }
 
     /* ── 캡처 버튼 ── */
     #captureBar { position: relative; z-index: 100; background: #f8f9fa; padding: 12px 16px; border-bottom: 2px solid #ddd; margin: -20px -20px 20px -20px; text-align: center; }
@@ -67,6 +69,8 @@
     /* TikZ SVG */
     #captureTarget .tikz-svg-inline { text-align: center; margin: 10px auto; overflow: hidden; }
     #captureTarget .tikz-svg-inline svg { display: block; margin: 0 auto; max-width: 100%; max-height: 500px; width: auto; height: auto; }
+    #captureTarget .latex-table { border-collapse: collapse; margin: 10px auto; font-size: inherit; font-family: inherit; color: #000; }
+    #captureTarget .latex-table td { padding: 4px 14px; }
 
     /* ── 캡처 설정 모달 ── */
     .capture-modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center; }
@@ -137,6 +141,75 @@
       if (str === null || str === undefined) return "";
       if (typeof str !== 'string') str = String(str);
       return str.replace(/\\\\/g, '\\').replace(/\u00A0/g, ' ');
+    }
+
+    /* ── LaTeX 표 → HTML <table> 자동 변환 ── */
+    function convertTablesToHtml(text) {
+      // $$\begin{array}{spec}...\end{array}$$
+      text = text.replace(
+        /\$\$\s*\\begin\{array\}\s*\{([^}]*)\}([\s\S]*?)\\end\{array\}\s*\$\$/g,
+        function(m, spec, body) { return parseLatexTable(spec, body); }
+      );
+      // \begin{tabular}{spec}...\end{tabular}
+      text = text.replace(
+        /\\begin\{tabular\}\s*\{([^}]*)\}([\s\S]*?)\\end\{tabular\}/g,
+        function(m, spec, body) { return parseLatexTable(spec, body); }
+      );
+      return text;
+    }
+
+    function parseLatexTable(colSpec, rawContent) {
+      // 1. 컬럼 정렬 및 테두리 파싱
+      var aligns = [];
+      var hasVertBorders = colSpec.indexOf('|') >= 0;
+      for (var i = 0; i < colSpec.length; i++) {
+        if ('clr'.indexOf(colSpec[i]) >= 0) aligns.push(colSpec[i]);
+      }
+
+      // 2. \hline 존재 여부 → 가로선 여부
+      var hasHline = /\\?hline/.test(rawContent);
+
+      // 3. \hline 제거 후 행 분리 (\\ = 2개 백슬래시)
+      var content = rawContent.replace(/\\hline/g, '');
+      var rows = content.split(/\\\\/)
+        .map(function(r) { return r.trim(); })
+        .filter(function(r) { return r.length > 0; });
+
+      // 4. 테두리 방식 결정
+      var fullBorder = hasVertBorders && hasHline;
+      var borderCSS = '1px solid #000';
+
+      // 5. HTML 생성
+      var html = '<table class="latex-table"' +
+        (fullBorder ? ' style="border:' + borderCSS + ';"' : '') + '>';
+
+      rows.forEach(function(row) {
+        var cells = row.split('&').map(function(c) { return c.trim(); });
+        html += '<tr>';
+        cells.forEach(function(cell, cIdx) {
+          var align = aligns[cIdx] || 'c';
+          var ta = align === 'l' ? 'left' : (align === 'r' ? 'right' : 'center');
+          var styles = ['text-align:' + ta];
+          if (fullBorder) styles.push('border:' + borderCSS);
+          html += '<td style="' + styles.join(';') + '">' + processTableCell(cell) + '</td>';
+        });
+        html += '</tr>';
+      });
+
+      html += '</table>';
+      return html;
+    }
+
+    function processTableCell(cell) {
+      // 감싸는 {} 제거: {[40,45)} → [40,45)
+      if (cell.match(/^\{([\s\S]*)\}$/)) cell = cell.replace(/^\{([\s\S]*)\}$/, '$1');
+      // \text{...} → 일반 텍스트
+      cell = cell.replace(/\\text\{([^}]*)\}/g, '$1');
+      // 남은 LaTeX 명령어가 있으면 $...$ 래핑 (MathJax 처리용)
+      if (cell.match(/[\\^_]/) || (cell.match(/\{/) && cell.match(/\}/))) {
+        cell = '$' + cell + '$';
+      }
+      return cell;
     }
 
     function normalizeGraphics(graphics) {
@@ -301,6 +374,7 @@
       content.appendChild(titleDiv);
 
       var bodyText = cleanLatex(parsed.body || "");
+      bodyText = convertTablesToHtml(bodyText);
       var bodyParts = bodyText.split(/\[image_section\]\s*:\s*(\d+)/);
       var referencedIndices = {};
 
@@ -471,6 +545,7 @@
 
       // ── 본문 처리: [image_section] 분할 ──
       var bodyText = cleanLatex(parsed.body || "");
+      bodyText = convertTablesToHtml(bodyText);
       var bodyParts = bodyText.split(/\[image_section\]\s*:\s*(\d+)/);
       var referencedIndices = {};
 
