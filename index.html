@@ -137,7 +137,6 @@
             '      setTimeout(function() {\n' +
             '        var msg = document.getElementById("loadingMsg");\n' +
             '        if (msg) msg.style.display = "none";\n' +
-            '        adjustHeight();\n' +
             '      }, 3000);\n' +
             '    };\n' +
             '    s.onerror = function() {\n' +
@@ -145,20 +144,18 @@
             '      if (msg) { msg.textContent = "⚠️ TikZ 렌더링 라이브러리 로드 실패"; msg.style.color = "#e74c3c"; }\n' +
             '    };\n' +
             '    document.head.appendChild(s);\n' +
-            '    var lastSentHeight = 0;\n' +
-            '    function adjustHeight() {\n' +
+            '    var resizeDone = false;\n' +
+            '    var observer = new MutationObserver(function() {\n' +
+            '      if (resizeDone) return;\n' +
             '      var svg = document.querySelector("svg");\n' +
-            '      var height = 60;\n' +
             '      if (svg) {\n' +
+            '        resizeDone = true;\n' +
+            '        observer.disconnect();\n' +
             '        var rect = svg.getBoundingClientRect();\n' +
-            '        height = Math.ceil(rect.height) + 30;\n' +
-            '      }\n' +
-            '      if (height > 50 && Math.abs(height - lastSentHeight) > 5) {\n' +
-            '        lastSentHeight = height;\n' +
+            '        var height = Math.ceil(rect.height) + 30;\n' +
             '        window.parent.postMessage({ type: "tikz-resize", height: height }, "*");\n' +
             '      }\n' +
-            '    }\n' +
-            '    var observer = new MutationObserver(function() { adjustHeight(); });\n' +
+            '    });\n' +
             '    observer.observe(document.body, { childList: true, subtree: true });\n' +
             '  <\/script>\n</body>\n</html>'
           );
