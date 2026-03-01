@@ -6,7 +6,7 @@
   <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,700;1,400&display=swap">
   <style>
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; padding-bottom: 80px; margin: 0; color: #333; background: #fff; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; margin: 0; color: #333; background: #fff; }
     .q-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #555; border-bottom: 2px solid #eee; padding-bottom: 5px; }
     .q-body { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
     .q-choices { list-style-type: none; padding: 0; }
@@ -20,11 +20,13 @@
     .image-placeholder { display: inline-block; margin: 10px 0; padding: 6px 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404; font-size: 13px; }
 
     /* ── 캡처 버튼 ── */
-    #captureBar { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; background: #fff; padding: 12px 20px; border-top: 2px solid #e74c3c; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); text-align: center; }
-    #captureBar button { background: #e74c3c; color: #fff; border: none; padding: 10px 20px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 6px; margin-right: 8px; }
-    #captureBar button:hover { background: #c0392b; }
-    #captureBar button.secondary { background: #3498db; }
-    #captureBar button.secondary:hover { background: #2980b9; }
+    #captureBar { position: relative; z-index: 100; background: #f8f9fa; padding: 12px 16px; border-bottom: 2px solid #ddd; margin: -20px -20px 20px -20px; text-align: center; }
+    #captureBar button { background: #ccc; color: #fff; border: none; padding: 10px 20px; font-size: 14px; font-weight: bold; cursor: not-allowed; border-radius: 6px; margin-right: 8px; transition: all 0.3s; }
+    #captureBar.ready button { cursor: pointer; }
+    #captureBar.ready button.primary { background: #e74c3c; }
+    #captureBar.ready button.primary:hover { background: #c0392b; }
+    #captureBar.ready button.secondary { background: #3498db; }
+    #captureBar.ready button.secondary:hover { background: #2980b9; }
     #captureBar .status { font-size: 12px; color: #999; margin-left: 8px; }
 
     /* ── 캡처 전용 스타일 (출판 품질) ── */
@@ -62,9 +64,9 @@
 <body>
 
   <div id="captureBar">
-    <button onclick="captureAsPng()">📸 PNG 캡처 (새 창)</button>
-    <button class="secondary" onclick="captureAndDownload()">💾 PNG 다운로드</button>
-    <span class="status" id="captureStatus"></span>
+    <button class="primary" id="btnCapture" disabled onclick="captureAsPng()">📸 PNG 캡처 (새 창)</button>
+    <button class="secondary" id="btnDownload" disabled onclick="captureAndDownload()">💾 PNG 다운로드</button>
+    <span class="status" id="captureStatus">문항을 불러오면 활성화됩니다</span>
   </div>
 
   <div id="error-msg"></div>
@@ -224,7 +226,11 @@
         document.getElementById('error-msg').style.display = 'none';
         currentParsedData = parsed;
         renderAll(parsed);
-        document.getElementById('captureBar').style.display = 'block';
+        // 캡처 버튼 활성화
+        document.getElementById('captureBar').classList.add('ready');
+        document.getElementById('btnCapture').disabled = false;
+        document.getElementById('btnDownload').disabled = false;
+        document.getElementById('captureStatus').textContent = '✅ 캡처 준비 완료';
       } catch (e) {
         showError('JSON 파싱 에러: ' + e.message);
       }
