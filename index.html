@@ -124,8 +124,8 @@
             '  <meta charset="utf-8">\n' +
             '  <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">\n' +
             '  <style>\n' +
-            '    body { margin: 0; padding: 10px; display: flex; justify-content: center; align-items: center; min-height: 100px; background: transparent; }\n' +
-            '    svg { max-width: 100%; height: auto; }\n' +
+            '    body { margin: 0; padding: 10px; text-align: center; background: transparent; overflow: hidden; }\n' +
+            '    svg { max-width: 100%; height: auto; display: inline-block; }\n' +
             '    .tikz-loading { color: #999; font-family: "Segoe UI", sans-serif; font-size: 14px; text-align: center; padding: 20px; }\n' +
             '  </style>\n</head>\n<body>\n' +
             '  <div class="tikz-loading" id="loadingMsg">⏳ TikZ 그래프 렌더링 중...</div>\n' +
@@ -137,21 +137,29 @@
             '      setTimeout(function() {\n' +
             '        var msg = document.getElementById("loadingMsg");\n' +
             '        if (msg) msg.style.display = "none";\n' +
-            '      }, 2000);\n' +
+            '        adjustHeight();\n' +
+            '      }, 3000);\n' +
             '    };\n' +
             '    s.onerror = function() {\n' +
             '      var msg = document.getElementById("loadingMsg");\n' +
             '      if (msg) { msg.textContent = "⚠️ TikZ 렌더링 라이브러리 로드 실패"; msg.style.color = "#e74c3c"; }\n' +
             '    };\n' +
             '    document.head.appendChild(s);\n' +
+            '    var lastSentHeight = 0;\n' +
             '    function adjustHeight() {\n' +
-            '      var body = document.body, html = document.documentElement;\n' +
-            '      var height = Math.max(body.scrollHeight, body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight);\n' +
-            '      if (height > 50) window.parent.postMessage({ type: "tikz-resize", height: height + 40 }, "*");\n' +
+            '      var svg = document.querySelector("svg");\n' +
+            '      var height = 60;\n' +
+            '      if (svg) {\n' +
+            '        var rect = svg.getBoundingClientRect();\n' +
+            '        height = Math.ceil(rect.height) + 30;\n' +
+            '      }\n' +
+            '      if (height > 50 && Math.abs(height - lastSentHeight) > 5) {\n' +
+            '        lastSentHeight = height;\n' +
+            '        window.parent.postMessage({ type: "tikz-resize", height: height }, "*");\n' +
+            '      }\n' +
             '    }\n' +
             '    var observer = new MutationObserver(function() { adjustHeight(); });\n' +
-            '    observer.observe(document.body, { childList: true, subtree: true, attributes: true });\n' +
-            '    setInterval(adjustHeight, 1000);\n' +
+            '    observer.observe(document.body, { childList: true, subtree: true });\n' +
             '  <\/script>\n</body>\n</html>'
           );
           iframeDoc.close();
@@ -281,11 +289,13 @@
     /* ── iframe 높이 자동 조절 수신 ── */
     window.addEventListener('message', function(event) {
       if (event.data && event.data.type === 'tikz-resize') {
+        var targetHeight = Math.min(event.data.height, 800); // 최대 800px 제한
         var iframes = document.querySelectorAll('.tikz-container iframe');
         iframes.forEach(function(iframe) {
           try {
             if (iframe.contentWindow === event.source) {
-              iframe.style.height = event.data.height + 'px';
+              iframe.style.height = targetHeight + 'px';
+              iframe.style.minHeight = '0'; // 초기 minHeight 제거
             }
           } catch (e) { /* cross-origin 무시 */ }
         });
