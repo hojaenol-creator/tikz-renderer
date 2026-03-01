@@ -84,12 +84,22 @@
       // iframe으로 독립된 TikZJax 환경 구성
       var iframe = document.createElement('iframe');
       iframe.style.width = '100%';
-      iframe.style.minHeight = '450px';
+      iframe.style.height = '100%';
       iframe.style.border = 'none';
-      iframe.style.overflow = 'hidden';
       iframe.style.background = 'transparent';
       iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-      tikzWrapper.appendChild(iframe);
+
+      // 리사이즈 가능한 래퍼
+      var resizeWrap = document.createElement('div');
+      resizeWrap.style.cssText = 'resize: vertical; overflow: hidden; border: 1px solid #ccc; border-radius: 4px; padding: 0; min-height: 150px; max-height: 1200px; height: 450px; position: relative;';
+      resizeWrap.appendChild(iframe);
+
+      var resizeHint = document.createElement('div');
+      resizeHint.style.cssText = 'text-align: right; font-size: 11px; color: #999; margin-top: 4px;';
+      resizeHint.textContent = '↕ 아래쪽 모서리를 드래그하여 크기 조절';
+
+      tikzWrapper.appendChild(resizeWrap);
+      tikzWrapper.appendChild(resizeHint);
 
       // 토글 버튼 및 원본 코드
       var toggleArea = document.createElement('div');
@@ -124,7 +134,7 @@
             '  <meta charset="utf-8">\n' +
             '  <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">\n' +
             '  <style>\n' +
-            '    body { margin: 0; padding: 10px; text-align: center; background: transparent; overflow: hidden; }\n' +
+            '    body { margin: 0; padding: 10px; text-align: center; background: transparent; overflow: auto; }\n' +
             '    svg { max-width: 100%; height: auto; display: inline-block; }\n' +
             '    .tikz-loading { color: #999; font-family: "Segoe UI", sans-serif; font-size: 14px; text-align: center; padding: 20px; }\n' +
             '  </style>\n</head>\n<body>\n' +
@@ -144,19 +154,6 @@
             '      if (msg) { msg.textContent = "⚠️ TikZ 렌더링 라이브러리 로드 실패"; msg.style.color = "#e74c3c"; }\n' +
             '    };\n' +
             '    document.head.appendChild(s);\n' +
-            '    var resizeDone = false;\n' +
-            '    var observer = new MutationObserver(function() {\n' +
-            '      if (resizeDone) return;\n' +
-            '      var svg = document.querySelector("svg");\n' +
-            '      if (svg) {\n' +
-            '        resizeDone = true;\n' +
-            '        observer.disconnect();\n' +
-            '        var rect = svg.getBoundingClientRect();\n' +
-            '        var height = Math.ceil(rect.height) + 30;\n' +
-            '        window.parent.postMessage({ type: "tikz-resize", height: height }, "*");\n' +
-            '      }\n' +
-            '    });\n' +
-            '    observer.observe(document.body, { childList: true, subtree: true });\n' +
             '  <\/script>\n</body>\n</html>'
           );
           iframeDoc.close();
@@ -188,12 +185,6 @@
     window.addEventListener('message', function(event) {
       var payloadString = event.data;
       if (!payloadString || typeof payloadString !== 'string') return;
-
-      // tikz-resize 메시지 무시
-      try {
-        var test = JSON.parse(payloadString);
-        if (test && test.type === 'tikz-resize') return;
-      } catch(e) { /* not JSON or not resize, continue */ }
 
       try {
         var parsed = JSON.parse(payloadString);
@@ -282,22 +273,6 @@
         MathJax.typesetPromise([content]).catch(function(err) { console.error(err); });
       }
     }
-
-    /* ── iframe 높이 자동 조절 수신 ── */
-    window.addEventListener('message', function(event) {
-      if (event.data && event.data.type === 'tikz-resize') {
-        var targetHeight = Math.min(event.data.height, 800); // 최대 800px 제한
-        var iframes = document.querySelectorAll('.tikz-container iframe');
-        iframes.forEach(function(iframe) {
-          try {
-            if (iframe.contentWindow === event.source) {
-              iframe.style.height = targetHeight + 'px';
-              iframe.style.minHeight = '0'; // 초기 minHeight 제거
-            }
-          } catch (e) { /* cross-origin 무시 */ }
-        });
-      }
-    });
 
     function showError(msg) {
       var errDiv = document.getElementById('error-msg');
