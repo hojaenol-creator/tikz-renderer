@@ -9,12 +9,14 @@
     .q-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #555; border-bottom: 2px solid #eee; padding-bottom: 5px; }
     .q-body { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
     .q-choices { list-style-type: none; padding: 0; }
-    .q-choices li { padding: 10px; margin-bottom: 8px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef; }
-    .tikz-container { margin-top: 20px; text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px dashed #ccc; }
+    .q-choices li { padding: 10px; margin-bottom: 8px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef; font-size: 16px; }
+    .q-choices li .choice-index { font-weight: bold; color: #007bff; margin-right: 8px; }
+    .tikz-container { margin-top: 15px; margin-bottom: 15px; text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px dashed #ccc; }
     .q-tikz { background: #e9ecef; padding: 10px; font-family: monospace; font-size: 12px; white-space: pre-wrap; margin-top: 10px; text-align: left; }
     #error-msg { color: #fff; background: #ff6b6b; font-weight: bold; display: none; padding: 10px; border-radius: 4px; margin-bottom: 15px; }
     .btn { background: #6c757d; color: white; border: none; padding: 6px 12px; font-size: 12px; cursor: pointer; border-radius: 4px; }
     .btn:hover { background: #5a6268; }
+    .image-placeholder { display: inline-block; margin: 10px 0; padding: 6px 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404; font-size: 13px; }
   </style>
 
   <script>
@@ -35,19 +37,160 @@
   </div>
 
   <script>
+    /* ── 유틸리티 함수 ── */
+
     // 백슬래시 정리 및 특수 공백 제거
     function cleanLatex(str) {
       if (!str) return "";
       return str.replace(/\\\\/g, '\\').replace(/\u00A0/g, ' ');
     }
 
-    // GAS로부터 JSON 데이터를 받는 리스너
+    // graphics: 이전(단일 객체) / 신규(배열) 모두 호환
+    function normalizeGraphics(graphics) {
+      if (!graphics) return [];
+      if (Array.isArray(graphics)) return graphics;
+      return [graphics];
+    }
+
+    // choices: 이전(문자열 배열) / 신규({index,text} 배열) 모두 호환
+    function normalizeChoices(choices) {
+      if (!choices || !Array.isArray(choices)) return [];
+      var labels = ['A','B','C','D','E','F','G','H','I','J'];
+      return choices.map(function(c, i) {
+        if (typeof c === 'string') {
+          return { index: labels[i] || String(i + 1), text: c };
+        }
+        return { index: c.index || labels[i] || String(i + 1), text: c.text || '' };
+      });
+    }
+
+    /* ── TikZ iframe 블록 생성 ── */
+    function createTikzBlock(graphicItem) {
+      var cleanTikzCode = cleanLatex(graphicItem.tikzCode);
+
+      var tikzWrapper = document.createElement('div');
+      tikzWrapper.className = 'tikz-container';
+      tikzWrapper.innerHTML = '<div style="font-weight:bold; color: #007bff; margin-bottom: 10px;">[AI 생성 그래프 (TikZ)]</div>';
+
+      // 원본 이미지 링크
+      if (graphicItem.originalUrl) {
+        var linkDiv = document.createElement('div');
+        linkDiv.style.marginBottom = '10px';
+        linkDiv.innerHTML = '<a href="' + graphicItem.originalUrl + '" target="_blank" style="color:#007bff; text-decoration: none; font-weight: bold;">📷 원본 이미지 보기 (새창)</a>';
+        tikzWrapper.appendChild(linkDiv);
+      }
+
+      // iframe으로 독립된 TikZJax 환경 구성
+      var iframe = document.createElement('iframe');
+      iframe.style.width = '100%';
+      iframe.style.minHeight = '450px';
+      iframe.style.border = 'none';
+      iframe.style.overflow = 'hidden';
+      iframe.style.background = 'transparent';
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      tikzWrapper.appendChild(iframe);
+
+      // 토글 버튼 및 원본 코드
+      var toggleArea = document.createElement('div');
+      toggleArea.style.marginTop = '10px';
+
+      var toggleBtn = document.createElement('button');
+      toggleBtn.className = 'btn';
+      toggleBtn.textContent = '💻 원본 TikZ 코드 보기/숨기기';
+
+      var rawCodeDiv = document.createElement('div');
+      rawCodeDiv.className = 'q-tikz';
+      rawCodeDiv.style.display = 'none';
+      rawCodeDiv.textContent = cleanTikzCode;
+
+      toggleBtn.addEventListener('click', function() {
+        rawCodeDiv.style.display = (rawCodeDiv.style.display === 'none') ? 'block' : 'none';
+      });
+
+      toggleArea.appendChild(toggleBtn);
+      toggleArea.appendChild(rawCodeDiv);
+      tikzWrapper.appendChild(toggleArea);
+
+      // iframe 내부 HTML 주입 (DOM 삽입 후 실행)
+      var iframeRef = iframe;
+      var tikzCode = cleanTikzCode;
+      requestAnimationFrame(function() {
+        try {
+          var iframeDoc = iframeRef.contentWindow.document;
+          iframeDoc.open();
+          iframeDoc.write(
+            '<!DOCTYPE html>\n<html>\n<head>\n' +
+            '  <meta charset="utf-8">\n' +
+            '  <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">\n' +
+            '  <style>\n' +
+            '    body { margin: 0; padding: 10px; display: flex; justify-content: center; align-items: center; min-height: 100px; background: transparent; }\n' +
+            '    svg { max-width: 100%; height: auto; }\n' +
+            '    .tikz-loading { color: #999; font-family: "Segoe UI", sans-serif; font-size: 14px; text-align: center; padding: 20px; }\n' +
+            '  </style>\n</head>\n<body>\n' +
+            '  <div class="tikz-loading" id="loadingMsg">⏳ TikZ 그래프 렌더링 중...</div>\n' +
+            '  <script type="text/tikz">\n' + tikzCode + '\n  <\/script>\n' +
+            '  <script>\n' +
+            '    var s = document.createElement("script");\n' +
+            '    s.src = "https://tikzjax.com/v1/tikzjax.js";\n' +
+            '    s.onload = function() {\n' +
+            '      setTimeout(function() {\n' +
+            '        var msg = document.getElementById("loadingMsg");\n' +
+            '        if (msg) msg.style.display = "none";\n' +
+            '      }, 2000);\n' +
+            '    };\n' +
+            '    s.onerror = function() {\n' +
+            '      var msg = document.getElementById("loadingMsg");\n' +
+            '      if (msg) { msg.textContent = "⚠️ TikZ 렌더링 라이브러리 로드 실패"; msg.style.color = "#e74c3c"; }\n' +
+            '    };\n' +
+            '    document.head.appendChild(s);\n' +
+            '    function adjustHeight() {\n' +
+            '      var body = document.body, html = document.documentElement;\n' +
+            '      var height = Math.max(body.scrollHeight, body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight);\n' +
+            '      if (height > 50) window.parent.postMessage({ type: "tikz-resize", height: height + 40 }, "*");\n' +
+            '    }\n' +
+            '    var observer = new MutationObserver(function() { adjustHeight(); });\n' +
+            '    observer.observe(document.body, { childList: true, subtree: true, attributes: true });\n' +
+            '    setInterval(adjustHeight, 1000);\n' +
+            '  <\/script>\n</body>\n</html>'
+          );
+          iframeDoc.close();
+        } catch (err) {
+          console.error('iframe TikZ 주입 실패:', err);
+        }
+      });
+
+      return tikzWrapper;
+    }
+
+    /* ── 원본 이미지만 있는 graphic용 블록 ── */
+    function createImageLinkBlock(graphicItem) {
+      var div = document.createElement('div');
+      div.className = 'tikz-container';
+      div.innerHTML = '<a href="' + graphicItem.originalUrl + '" target="_blank" style="color:#007bff; text-decoration: none; font-weight: bold;">📷 원본 이미지 보기 (새창)</a>';
+      return div;
+    }
+
+    /* ── 플레이스홀더 경고 블록 ── */
+    function createPlaceholder(index) {
+      var div = document.createElement('div');
+      div.className = 'image-placeholder';
+      div.textContent = '⚠️ 그래픽 #' + index + ' 데이터를 찾을 수 없습니다.';
+      return div;
+    }
+
+    /* ── GAS 메시지 수신 리스너 ── */
     window.addEventListener('message', function(event) {
-      const payloadString = event.data;
-      if (!payloadString) return;
+      var payloadString = event.data;
+      if (!payloadString || typeof payloadString !== 'string') return;
+
+      // tikz-resize 메시지 무시
+      try {
+        var test = JSON.parse(payloadString);
+        if (test && test.type === 'tikz-resize') return;
+      } catch(e) { /* not JSON or not resize, continue */ }
 
       try {
-        const parsed = JSON.parse(payloadString);
+        var parsed = JSON.parse(payloadString);
         document.getElementById('error-msg').style.display = 'none';
         renderAll(parsed);
       } catch (e) {
@@ -55,183 +198,91 @@
       }
     });
 
+    /* ── 메인 렌더링 함수 ── */
     function renderAll(parsed) {
-      const content = document.getElementById('content');
+      var content = document.getElementById('content');
       content.innerHTML = '';
 
+      var graphicsArr = normalizeGraphics(parsed.graphics);
+      var choicesArr = normalizeChoices(parsed.choices);
+
       // 1. 타이틀
-      const titleDiv = document.createElement('div');
+      var titleDiv = document.createElement('div');
       titleDiv.className = 'q-title';
       titleDiv.textContent = '문항 미리보기';
       content.appendChild(titleDiv);
 
-      // 2. 본문 생성
-      let bodyText = cleanLatex(parsed.body || "");
-      bodyText = bodyText.replace(/\n/g, "<br>");
-      const bodyDiv = document.createElement('div');
-      bodyDiv.className = 'q-body';
-      bodyDiv.innerHTML = bodyText;
-      content.appendChild(bodyDiv);
+      // 2. 본문 — [image_section]: N 플레이스홀더를 기준으로 분할
+      var bodyText = cleanLatex(parsed.body || "");
+      var bodyParts = bodyText.split(/\[image_section\]\s*:\s*(\d+)/);
+      // 결과: [텍스트0, 번호1, 텍스트2, 번호3, ...]
 
-      // 3. 보기 생성
-      if (parsed.choices && parsed.choices.length > 0) {
-        const ul = document.createElement('ul');
+      var referencedIndices = {};
+
+      for (var i = 0; i < bodyParts.length; i++) {
+        if (i % 2 === 0) {
+          // 텍스트 파트
+          var textPart = bodyParts[i].trim();
+          if (textPart) {
+            var textDiv = document.createElement('div');
+            textDiv.className = 'q-body';
+            textDiv.innerHTML = textPart.replace(/\n/g, '<br>');
+            content.appendChild(textDiv);
+          }
+        } else {
+          // [image_section]: N → 0-based index로 변환
+          var gIdx = parseInt(bodyParts[i], 10) - 1;
+          referencedIndices[gIdx] = true;
+
+          if (gIdx >= 0 && gIdx < graphicsArr.length) {
+            var gItem = graphicsArr[gIdx];
+            if (gItem && gItem.isExist && gItem.tikzCode) {
+              content.appendChild(createTikzBlock(gItem));
+            } else if (gItem && gItem.isExist && gItem.originalUrl) {
+              content.appendChild(createImageLinkBlock(gItem));
+            } else {
+              content.appendChild(createPlaceholder(gIdx + 1));
+            }
+          } else {
+            content.appendChild(createPlaceholder(gIdx + 1));
+          }
+        }
+      }
+
+      // 3. 본문에서 참조되지 않은 나머지 graphics를 하단에 표시
+      graphicsArr.forEach(function(gItem, idx) {
+        if (referencedIndices[idx]) return;
+        if (gItem && gItem.isExist && gItem.tikzCode) {
+          content.appendChild(createTikzBlock(gItem));
+        } else if (gItem && gItem.isExist && gItem.originalUrl) {
+          content.appendChild(createImageLinkBlock(gItem));
+        }
+      });
+
+      // 4. 객관식 보기
+      if (choicesArr.length > 0) {
+        var ul = document.createElement('ul');
         ul.className = 'q-choices';
-        parsed.choices.forEach(c => {
-          const li = document.createElement('li');
-          li.innerHTML = cleanLatex(c);
+        choicesArr.forEach(function(c) {
+          var li = document.createElement('li');
+          li.innerHTML = '<span class="choice-index">' + c.index + '.</span> ' + cleanLatex(c.text);
           ul.appendChild(li);
         });
         content.appendChild(ul);
       }
 
-      // 4. 원본 이미지 링크
-      if (parsed.graphics && parsed.graphics.isExist && parsed.graphics.originalUrl) {
-        const linkDiv = document.createElement('div');
-        linkDiv.style.marginBottom = '15px';
-        linkDiv.innerHTML = `<a href="${parsed.graphics.originalUrl}" target="_blank" style="color:#007bff; text-decoration: none; font-weight: bold;">📷 원본 이미지 보기 (새창)</a>`;
-        content.appendChild(linkDiv);
-      }
-
-      // 5. TikZ 그래프 생성 — iframe 방식으로 독립 렌더링
-      if (parsed.graphics && parsed.graphics.isExist && parsed.graphics.tikzCode) {
-        const cleanTikzCode = cleanLatex(parsed.graphics.tikzCode);
-
-        const tikzWrapper = document.createElement('div');
-        tikzWrapper.className = 'tikz-container';
-        tikzWrapper.innerHTML = `<div style="font-weight:bold; color: #007bff; margin-bottom: 10px;">[AI 생성 그래프 (TikZ)]</div>`;
-
-        // ── [핵심 수정] iframe을 만들어서 독립된 환경에서 TikZJax 실행 ──
-        const iframe = document.createElement('iframe');
-        iframe.style.width = '100%';
-        iframe.style.minHeight = '450px';
-        iframe.style.border = 'none';
-        iframe.style.overflow = 'hidden';
-        iframe.style.background = 'transparent';
-        // sandbox 속성: allow-scripts를 통해 스크립트 실행 허용
-        // allow-same-origin은 tikzjax.com 리소스 로드에 필요
-        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-        tikzWrapper.appendChild(iframe);
-
-        // 토글 버튼 및 원본 코드
-        const toggleArea = document.createElement('div');
-        toggleArea.style.marginTop = '10px';
-
-        const toggleBtn = document.createElement('button');
-        toggleBtn.className = 'btn';
-        toggleBtn.textContent = '💻 원본 TikZ 코드 보기/숨기기';
-
-        const rawCodeDiv = document.createElement('div');
-        rawCodeDiv.className = 'q-tikz';
-        rawCodeDiv.style.display = 'none';
-        rawCodeDiv.textContent = cleanTikzCode;
-
-        toggleBtn.addEventListener('click', function() {
-          rawCodeDiv.style.display = (rawCodeDiv.style.display === 'none') ? 'block' : 'none';
-        });
-
-        toggleArea.appendChild(toggleBtn);
-        toggleArea.appendChild(rawCodeDiv);
-        tikzWrapper.appendChild(toggleArea);
-
-        content.appendChild(tikzWrapper);
-
-        // iframe이 DOM에 붙은 후 내부 HTML 주입
-        // requestAnimationFrame으로 DOM 삽입 완료를 보장
-        requestAnimationFrame(function() {
-          try {
-            const iframeDoc = iframe.contentWindow.document;
-            iframeDoc.open();
-            iframeDoc.write(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">
-  <style>
-    body {
-      margin: 0;
-      padding: 10px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100px;
-      background: transparent;
-    }
-    svg { max-width: 100%; height: auto; }
-    /* 로딩 표시 */
-    .tikz-loading {
-      color: #999;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 14px;
-      text-align: center;
-      padding: 20px;
-    }
-  </style>
-</head>
-<body>
-  <div class="tikz-loading" id="loadingMsg">⏳ TikZ 그래프 렌더링 중...</div>
-  <script type="text/tikz">
-${cleanTikzCode}
-  <\/script>
-  <script>
-    // TikZJax 로드 — DOMContentLoaded 이벤트에서 자동으로 <script type="text/tikz">를 스캔함
-    var s = document.createElement('script');
-    s.src = 'https://tikzjax.com/v1/tikzjax.js';
-    s.onload = function() {
-      // 로딩 메시지 숨기기 (렌더링 완료 후)
-      setTimeout(function() {
-        var msg = document.getElementById('loadingMsg');
-        if (msg) msg.style.display = 'none';
-      }, 2000);
-    };
-    s.onerror = function() {
-      var msg = document.getElementById('loadingMsg');
-      if (msg) {
-        msg.textContent = '⚠️ TikZ 렌더링 라이브러리 로드 실패';
-        msg.style.color = '#e74c3c';
-      }
-    };
-    document.head.appendChild(s);
-
-    // iframe 높이 자동 조절
-    function adjustHeight() {
-      var body = document.body;
-      var html = document.documentElement;
-      var height = Math.max(body.scrollHeight, body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight);
-      if (height > 50) {
-        window.parent.postMessage({ type: 'tikz-resize', height: height + 40 }, '*');
-      }
-    }
-    // 렌더링 완료 후 높이 조절 (MutationObserver 사용)
-    var observer = new MutationObserver(function() {
-      adjustHeight();
-    });
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-    // 폴백: 주기적 체크
-    setInterval(adjustHeight, 1000);
-  <\/script>
-</body>
-</html>`);
-            iframeDoc.close();
-          } catch (err) {
-            console.error('iframe TikZ 주입 실패:', err);
-          }
-        });
-      }
-
-      // 6. MathJax 렌더링 트리거
+      // 5. MathJax 렌더링 트리거
       if (window.MathJax && MathJax.typesetPromise) {
-        MathJax.typesetPromise([content]).catch(err => console.error(err));
+        MathJax.typesetPromise([content]).catch(function(err) { console.error(err); });
       }
     }
 
-    // iframe 높이 자동 조절 수신
+    /* ── iframe 높이 자동 조절 수신 ── */
     window.addEventListener('message', function(event) {
       if (event.data && event.data.type === 'tikz-resize') {
         var iframes = document.querySelectorAll('.tikz-container iframe');
         iframes.forEach(function(iframe) {
           try {
-            // 해당 iframe에서 온 메시지인지 확인
             if (iframe.contentWindow === event.source) {
               iframe.style.height = event.data.height + 'px';
             }
@@ -241,7 +292,7 @@ ${cleanTikzCode}
     });
 
     function showError(msg) {
-      const errDiv = document.getElementById('error-msg');
+      var errDiv = document.getElementById('error-msg');
       errDiv.textContent = msg;
       errDiv.style.display = 'block';
     }
