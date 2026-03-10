@@ -101,6 +101,20 @@
     <button class="primary" id="btnCapture" disabled onclick="captureAsPng()">📸 Capture PNG (New Tab)</button>
     <button class="secondary" id="btnDownload" disabled onclick="captureAndDownload()">💾 Download PNG</button>
     <span class="status" id="captureStatus">Load a question to enable</span>
+    <button onclick="toggleDebug()" style="background:#f39c12;color:#fff;border:none;padding:6px 12px;border-radius:4px;font-size:11px;cursor:pointer;margin-left:12px;">🐛 Debug</button>
+  </div>
+
+  <!-- Debug Panel -->
+  <div id="debugPanel" style="display:none; background:#1e1e1e; color:#ddd; padding:16px; margin-bottom:16px; border-radius:8px; font-family:monospace; font-size:13px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <span style="color:#f39c12; font-weight:bold;">🐛 Debug Panel</span>
+      <div>
+        <button onclick="debugRender()" style="background:#27ae60;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-weight:bold;margin-right:4px;">▶ Render JSON</button>
+        <button onclick="debugLoadSample()" style="background:#3498db;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px;">Load Sample</button>
+      </div>
+    </div>
+    <textarea id="debugInput" placeholder="Paste JSON here..." style="width:100%;height:180px;background:#2d2d2d;color:#ddd;border:1px solid #555;border-radius:4px;padding:10px;font-family:monospace;font-size:12px;resize:vertical;box-sizing:border-box;"></textarea>
+    <div id="debugLog" style="margin-top:8px; max-height:200px; overflow-y:auto; background:#111; padding:10px; border-radius:4px; font-size:11px; white-space:pre-wrap; display:none;"></div>
   </div>
 
   <div id="error-msg"></div>
@@ -713,6 +727,160 @@
     // 버튼 → 모달 열기
     function captureAsPng() { openModal('window'); }
     function captureAndDownload() { openModal('download'); }
+
+    /* ══════════════════════════════════════════
+       Debug Panel
+    ══════════════════════════════════════════ */
+    function toggleDebug() {
+      var panel = document.getElementById('debugPanel');
+      panel.style.display = (panel.style.display === 'none') ? 'block' : 'none';
+    }
+
+    function dlog(msg, type) {
+      var log = document.getElementById('debugLog');
+      log.style.display = 'block';
+      var color = type === 'error' ? '#e74c3c' : type === 'ok' ? '#2ecc71' : type === 'warn' ? '#f39c12' : '#aaa';
+      var time = new Date().toLocaleTimeString();
+      log.innerHTML += '<span style="color:#666;">[' + time + ']</span> <span style="color:' + color + ';">' + msg + '</span>\n';
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function debugRender() {
+      var raw = document.getElementById('debugInput').value.trim();
+      var log = document.getElementById('debugLog');
+      log.innerHTML = '';
+      log.style.display = 'block';
+
+      if (!raw) { dlog('No JSON input', 'error'); return; }
+
+      // Step 1: JSON parse
+      var parsed;
+      try {
+        parsed = JSON.parse(raw);
+        dlog('✅ JSON parse OK', 'ok');
+        dlog('   type: ' + (parsed.type || 'N/A'));
+        dlog('   body length: ' + (parsed.body || '').length + ' chars');
+        dlog('   choices: ' + (parsed.choices ? parsed.choices.length : 0));
+        dlog('   graphics: ' + (parsed.graphics ? (Array.isArray(parsed.graphics) ? parsed.graphics.length : 1) : 0));
+      } catch (e) {
+        dlog('❌ JSON parse FAILED: ' + e.message, 'error');
+        return;
+      }
+
+      // Step 2: Check graphics
+      var gArr = normalizeGraphics(parsed.graphics);
+      gArr.forEach(function(g, i) {
+        dlog('--- Graphic [' + i + '] ---');
+        dlog('   isExist: ' + g.isExist);
+        dlog('   tikzCode: ' + (g.tikzCode ? g.tikzCode.length + ' chars' : 'NONE'), g.tikzCode ? 'ok' : 'warn');
+        dlog('   originalUrl: ' + (g.originalUrl ? 'YES' : 'NONE'));
+        if (g.tikzCode) {
+          var code = g.tikzCode;
+          // Check common issues
+          if (code.indexOf('\\\\begin') >= 0) dlog('   ⚠ Double-escaped \\\\begin detected — cleanLatex will fix', 'warn');
+          if (code.indexOf('\\usetikzlibrary') >= 0) dlog('   ⚠ \\usetikzlibrary inside tikzpicture — TikZJax may not support this', 'warn');
+          if (code.indexOf('honeycomb') >= 0) dlog('   ⚠ pattern=honeycomb — may not be supported by TikZJax', 'warn');
+
+          var cleaned = code.replace(/\\\\/g, '\\').replace(/\u00A0/g, ' ');
+          dlog('   After cleanLatex: ' + cleaned.length + ' chars');
+          dlog('   Starts with: ' + cleaned.substring(0, 60) + '...');
+          dlog('   Ends with: ...' + cleaned.substring(cleaned.length - 40));
+        }
+      });
+
+      // Step 3: Check body for image placeholders
+      var body = parsed.body || '';
+      var imgMatches = body.match(/\[image[\s_]+section\]?\s*:?\s*\d+\s*\]?/gi);
+      if (imgMatches) {
+        dlog('--- Image Placeholders ---');
+        imgMatches.forEach(function(m) { dlog('   Found: ' + m, 'ok'); });
+      } else {
+        dlog('--- No image placeholders in body ---', 'warn');
+      }
+
+      // Step 4: Check table patterns
+      if (body.indexOf('begin{array}') >= 0 || body.indexOf('begin{tabular}') >= 0) {
+        dlog('--- Table detected in body — will convert to HTML ---', 'ok');
+      }
+
+      // Step 5: Actually render
+      dlog('');
+      dlog('▶ Calling renderAll()...');
+      try {
+        currentParsedData = parsed;
+        renderAll(parsed);
+        document.getElementById('captureBar').classList.add('ready');
+        document.getElementById('btnCapture').disabled = false;
+        document.getElementById('btnDownload').disabled = false;
+        document.getElementById('captureStatus').textContent = '✅ Ready to capture';
+        dlog('✅ renderAll() completed', 'ok');
+      } catch (e) {
+        dlog('❌ renderAll() FAILED: ' + e.message, 'error');
+        dlog('   Stack: ' + e.stack, 'error');
+      }
+
+      // Step 6: Check iframe creation
+      setTimeout(function() {
+        var iframes = document.querySelectorAll('#content .tikz-container iframe');
+        dlog('--- Post-render check ---');
+        dlog('   TikZ iframes created: ' + iframes.length);
+        iframes.forEach(function(iframe, i) {
+          try {
+            var doc = iframe.contentWindow.document;
+            var tikzScript = doc.querySelector('script[type="text/tikz"]');
+            var svg = doc.querySelector('svg');
+            dlog('   iframe[' + i + ']: tikz-script=' + (tikzScript ? 'YES' : 'NO') + ', svg=' + (svg ? 'YES (' + Math.round(svg.getBBox().width) + 'x' + Math.round(svg.getBBox().height) + ')' : 'NO (not yet rendered)'));
+          } catch (e) {
+            dlog('   iframe[' + i + ']: cross-origin or access error', 'warn');
+          }
+        });
+        dlog('');
+        dlog('⏳ TikZJax takes ~3-5s to render. Check again:', 'warn');
+      }, 1000);
+
+      // Step 7: Delayed SVG check
+      setTimeout(function() {
+        var iframes = document.querySelectorAll('#content .tikz-container iframe');
+        dlog('--- SVG check (5s later) ---');
+        iframes.forEach(function(iframe, i) {
+          try {
+            var svg = iframe.contentWindow.document.querySelector('svg');
+            if (svg) {
+              dlog('   iframe[' + i + ']: ✅ SVG rendered (' + Math.round(svg.getBBox().width) + 'x' + Math.round(svg.getBBox().height) + ')', 'ok');
+            } else {
+              dlog('   iframe[' + i + ']: ❌ No SVG — TikZJax failed', 'error');
+              // Check for error messages
+              var bodyText = iframe.contentWindow.document.body.innerText;
+              if (bodyText && bodyText.length > 0) {
+                dlog('   iframe body text: ' + bodyText.substring(0, 200), 'error');
+              }
+            }
+          } catch (e) {
+            dlog('   iframe[' + i + ']: ' + e.message, 'error');
+          }
+        });
+      }, 6000);
+    }
+
+    function debugLoadSample() {
+      var sample = {
+        "type": "multiple_choice",
+        "body": "Find the value of $x$ if $2x + 3 = 7$.\n[Image Section: 1]",
+        "choices": [
+          {"index": "A", "text": "$x = 1$"},
+          {"index": "B", "text": "$x = 2$"},
+          {"index": "C", "text": "$x = 3$"},
+          {"index": "D", "text": "$x = 4$"}
+        ],
+        "graphics": [{
+          "isExist": true,
+          "originalUrl": "",
+          "tikzCode": "\\begin{tikzpicture}\n\\draw[->] (-1,0) -- (5,0) node[right] {$x$};\n\\draw[->] (0,-1) -- (0,4) node[above] {$y$};\n\\draw[blue, thick, domain=0:4] plot (\\x, {0.5*\\x + 1});\n\\node[circle, fill=red, inner sep=2pt] at (2,2) {};\n\\node[below right] at (2,2) {$(2,2)$};\n\\end{tikzpicture}"
+        }]
+      };
+      document.getElementById('debugInput').value = JSON.stringify(sample, null, 2);
+      dlog('Sample JSON loaded — click ▶ Render JSON to test', 'ok');
+    }
 
     /* ══════════════════════════════════════════ */
     function showError(msg) {
